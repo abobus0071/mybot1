@@ -232,7 +232,7 @@ async def stand(message: types.Message | types.CallbackQuery):
 
     if player_score > dealer_score:
         with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
-            await bot.send_photo(message.from_id, photo, caption="Вы победили!")
+            await bot.send_photo(message.from_user.id, photo, caption="Вы победили!")
         user.count += 2 * user.bet
         user.wins += 1
 
