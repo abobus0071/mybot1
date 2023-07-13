@@ -1,156 +1,211 @@
-import random
 import logging
+import random
+
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters import Text
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardRemove
 
-from TokEn import key as TOKEN
-
-# Установка логгера
+from buttons import game_callback_data, game_kb, rules_kb, play_kb
+from casic import calculate_score, get_shuffled_deck, dealer_and_player_hand, hand_texts, get_card_text
+from config import key
 from states import OurStates
 from user_class import User
 
+# Установка логгера
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=TOKEN)
+bot = Bot(token=key)
 dp = Dispatcher(bot, storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)
 
 user_mapping: dict[int, User] = dict()
 
-# Колода карт
-cards = [
-    '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'
-]
-suits = ['♥', '♦', '♣', '♠']
-
-markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-markup.add(KeyboardButton("Hit"), KeyboardButton("Stand"))
-
-
-# Функция для подсчета суммы карт
-def calculate_score(hand):
-    score = 0
-    ace_count = 0
-    for card in hand:
-        if card[0] == 'A':
-            score += 11
-            ace_count += 1
-        elif card[0] in ['K', 'Q', 'J']:
-            score += 10
-        else:
-            score += int(card[0])
-    # Пересчитываем значение Aсe в 1, если нужно
-    while score > 21 and ace_count > 0:
-        score -= 10
-        ace_count -= 1
-    return score
-
 
 @dp.message_handler(commands=['start'], state="*")
 async def greetings(message: types.Message):
     user_id = message.from_id
-
     if user_id not in user_mapping:
         user_mapping[user_id] = User(
             user_id=user_id
         )
-    await message.answer(
-        text='Привет! Я бот для игры в blackjack. Напиши мне своё имя.'
-    )
+    with open('photo1689150138.jpeg', 'rb') as photo:
+        await bot.send_photo(user_id, photo, caption='Привет! Я бот для игры в blackjack. Напиши мне своё имя.'
+                             )
 
     await OurStates.enter_name.set()
 
 
+@dp.message_handler(commands=["me"], state="*")
+async def profile(message: types.Message):
+    if message.from_id not in user_mapping:
+        await message.answer("Вы ещё не зарегистрированы. Напишите /start.")
+        return
+    user = user_mapping[message.from_id]
+    await message.answer(f'Ваше имя: {user.name}\n'
+                         f'Ваш баланс: ${user.count}\n'
+                         f'Кол-во сыгранных / выигранных игр: {user.games}/{user.wins}')
+
+
 @dp.message_handler(state=OurStates.enter_name)
-async def pregame_instr(message: types.Message):
+async def name_entered(message: types.Message):
     user_id = message.from_id
-    user_mapping[user_id].name = message.text
-    await message.reply(
-        f"Привет, {user_mapping[user_id].name}. Добро пожаловать в игру Black Jack! Чтобы начать, введите /play")
-    await message.reply('Для начала рекомендую ознакомится с правилами:'
-                        'https://www.pokerstars.com/ru/casino/how-to-play/blackjack/rules/')
+    user = user_mapping[user_id]
+    user.name = message.text
+
+    hello_msg = f'Привет, {user_mapping[user_id].name}. Добро пожаловать в игру Black Jack! Для начала рекомендую ознакомится с правилами:'
+    await message.reply(hello_msg, reply_markup=rules_kb)
+    await message.answer('Если ты готов играть нажимай play', reply_markup=play_kb)
+
+    await OurStates.wait_for_play.set()
+
+
+@dp.message_handler(commands=['play'], state=OurStates.wait_for_play)
+@dp.callback_query_handler(game_callback_data.filter(action="play"), state=OurStates.wait_for_play)
+async def start_game(message: types.Message | types.CallbackQuery):
+    user = user_mapping[message.from_user.id]
+
+    if isinstance(message, types.CallbackQuery):
+        call = message
+        await bot.answer_callback_query(call.id)
+        await bot.send_message(call.from_user.id,
+                               f"Введите ставку на данный момент ваш баланс состовляет ${user.count}")
+    else:
+        await message.reply(f"Введите ставку, на данный момент ваш баланс состовляет ${user.count}")
+    await OurStates.bet.set()
+
+
+@dp.message_handler(state=OurStates.bet)
+async def set_bet(message: types.Message):
+    user = user_mapping[message.from_id]
+
+    bet_str = message.text
+    if bet_str.isdigit() and int(bet_str) <= user.count:
+        user.bet = int(bet_str)
+    else:
+        with open('714502432ca8252b8a2645b302622f2b.jpg', 'rb') as photo:
+            await bot.send_photo(message.from_id, photo,
+                                 "Вы думаете вы меня переиграете))). Попробуйте ввести свою ставку еще раз")
+            return
+
+    user.count -= user.bet
+
+    # Новая раздача
+    user.deck = get_shuffled_deck()
+    dealer_and_player_hand(user)
+
+    # Отправляем сообщение с картами игрока и одной картой дилера
+    player_hand_str = "\n".join(hand_texts(user.player_hand))
+    player_score = calculate_score(user.player_hand)
+    dealer_card = get_card_text(user.dealer_hand[0])
+    await message.reply(f'💲 ставка — ${user.bet} \n'
+                        f'💳 баланс — ${user.count}')
+    await message.reply(f"• Ваши карты({player_score} очков): \n"
+                        f"{player_hand_str}.\n \n"
+                        f"• Карта дилера: \n {dealer_card}.")
+
+    # Если у игрока сразу блэкджек (21 очко), игра завершается
+    if player_score == 21:
+        with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
+            await bot.send_photo(message.from_id, photo, caption="У вас блэкджек! Вы победили!")
+        user.count += 2 * user.bet
+        user.wins += 1
+        user.games += 1
+        await message.answer(
+            'Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
+        await message.reply('Если хотите сыграть еще пишите play', reply_markup=play_kb)
+        return
+    else:
+        # Игрок может взять еще карту или остановиться
+        await message.answer("Выберите действие: hit - взять карту, stand - остановиться.",
+                             reply_markup=game_kb)
     await OurStates.playing.set()
 
 
-# Команда для начала игры
-@dp.message_handler(commands=['play'], state=OurStates.playing)
-async def start_game(message: types.Message):
-    user_id = message.from_id
-    user = User(user_id=user_id)
-    user_mapping[user_id] = user
-
-    # Создаем новую колоду
-    user.deck = [(card, suit) for card in cards for suit in suits]
-    # Инициализируем карты игрока и дилера
-    user.player_hand = []
-    user.dealer_hand = []
-
-    # Раздаем карты игроку и дилеру
-    for _ in range(2):
-        to_user = random.choice(user.deck)
-        to_dealer = random.choice(user.deck)
-        user.player_hand.append(to_user)
-        user.dealer_hand.append(to_dealer)
-        user.deck.remove(to_user)
-        user.deck.remove(to_dealer)
-
-    # Отправляем сообщение с картами игрока и одной картой дилера
-    player_hand_str = ', '.join([f'{card[0]}{card[1]}' for card in user.player_hand])
-    await message.reply(f"Ваши карты: {player_hand_str}. Сумма очков: {calculate_score(user.player_hand)}.")
-    await message.reply(f"Карта дилера: {user.dealer_hand[0][0]}{user.dealer_hand[0][1]}.")
-
-    # Если у игрока сразу блэкджек (21 очко), игра завершается
-    if calculate_score(user.player_hand) == 21:
-        await message.reply("У вас блэкджек! Вы победили!")
-        return
-
-    # Игрок может взять еще карту или остановиться
-    await message.reply("Выберите действие: /hit - взять карту, /stand - остановиться.",
-                        reply_markup=markup)
-
-
 # Команда для взятия карты
-@dp.message_handler(Text(equals="Hit"))
-@dp.message_handler(commands=['hit'])
+@dp.callback_query_handler(game_callback_data.filter(action="hit"), state=OurStates.playing)
+@dp.message_handler(Text(equals="Hit"), state=OurStates.playing)
+@dp.message_handler(commands=['hit'], state=OurStates.playing)
 async def hit(message: types.Message):
-    user = user_mapping[message.from_id]
+    if isinstance(message, types.CallbackQuery):
+        call = message
+        message = call.message
+        await bot.answer_callback_query(call.id)
+        await bot.delete_message(message.chat.id, message.message_id)
+        user = user_mapping[call.from_user.id]
+    else:
+        user = user_mapping[message.from_user.id]
+        message = message
     # Получаем текущую колоду и руки игрока и дилера из контекста
     deck = user.deck
     player_hand = user.player_hand
     dealer_hand = user.dealer_hand
 
     # Добавляем игроку новую карту
-    new_card = random.choice(deck)
+    new_card = deck.pop()
     player_hand.append(new_card)
-    deck.remove(new_card)
 
     while calculate_score(dealer_hand) < 17:
-        new_card = random.choice(deck)
-        dealer_hand.append(new_card)
-        deck.remove(new_card)
+        new_card1 = deck.pop()
+        dealer_hand.append(new_card1)
 
     # Отправляем сообщение с новой картой игрока и суммой очков
-    await message.reply(
-        f"Вы взяли карту {new_card}. Ваши карты: {', '.join(player_hand)}. Сумма очков: {calculate_score(player_hand)}.")
+    player_hand_desc = "\n".join(hand_texts(user.player_hand))
+
+    dealer_hand_desc = "\n".join(hand_texts(user.dealer_hand))
+
+    player_score = calculate_score(player_hand)
+    dealer_score = calculate_score(dealer_hand)
+    await message.answer(
+        f"Вы взяли карту {get_card_text(new_card)}.\n"
+        f"• Ваши карты({player_score} очков):\n "
+        f"{player_hand_desc}.")
 
     # Если у игрока больше 21 очка, он проигрывает
-    if calculate_score(player_hand) > 21 and calculate_score(dealer_hand) < calculate_score(player_hand):
-        await message.reply("У вас перебор! Вы проиграли!")
-    elif calculate_score(player_hand) > 21 and calculate_score(dealer_hand) > calculate_score(player_hand):
-        await message.reply('Вы выиграли. У Дилера перебор')
-
-    # Игрок может взять еще карту или остановиться
-    await message.reply("Выберите действие: /hit - взять карту, /stand - остановиться.")
+    if player_score > 21 and dealer_score < player_score:
+        await message.answer("У вас перебор! Вы проиграли!",
+                             reply_markup=ReplyKeyboardRemove())
+        user.games += 1
+        await message.answer(
+            'Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
+        await message.answer('Если хотите сыграть еще пишите play',
+                             reply_markup=play_kb)
+        await OurStates.wait_for_play.set()
+    elif 21 < player_score < dealer_score:
+        await message.answer(f'• Карта дилера({dealer_score} очков): \n'
+                             f' {dealer_hand_desc}.')
+        with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
+            await bot.send_photo(message.from_id, photo, caption='Вы выиграли. У Дилера перебор',
+                                 reply_markup=ReplyKeyboardRemove())
+        user.count += 2 * user.bet
+        user.wins += 1
+        user.games += 1
+        await message.answer(
+            'Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
+        await message.answer('Если хотите сыграть еще пишите play',
+                             reply_markup=play_kb)
+        await OurStates.wait_for_play.set()
+    else:
+        # Игрок может взять еще карту или остановиться
+        await message.answer("Выберите действие: hit - взять карту, stand - остановиться.", reply_markup=game_kb)
 
 
 # Команда для остановки
-@dp.message_handler(Text(equals="Stand"))
-@dp.message_handler(commands=['stand'])
-async def stand(message: types.Message):
-    user = user_mapping[message.from_id]
+@dp.callback_query_handler(game_callback_data.filter(action="stand"), state=OurStates.playing)
+@dp.message_handler(Text(equals="Stand"), state=OurStates.playing)
+@dp.message_handler(commands=['stand'], state=OurStates.playing)
+async def stand(message: types.Message | types.CallbackQuery):
+    if isinstance(message, types.CallbackQuery):
+        call = message
+        message = call.message
+        await bot.answer_callback_query(call.id)
+        await bot.delete_message(message.chat.id, message.message_id)
+        user = user_mapping[call.from_user.id]
+    else:
+        user = user_mapping[message.from_user.id]
+        message = message
+
     # Получаем текущую колоду и руки игрока и дилера из контекста
     deck = user.deck
     player_hand = user.player_hand
@@ -162,18 +217,40 @@ async def stand(message: types.Message):
         dealer_hand.append(new_card)
         deck.remove(new_card)
 
+    cards_desc = []
+    for card in dealer_hand:
+        nominal, color = card
+        desc = f"{nominal} {color}"
+        cards_desc.append(desc)
+
     # Отправляем сообщение с картами дилера и его суммой очков
-    await message.reply(f"Карты дилера: {', '.join(dealer_hand)}. Сумма очков: {calculate_score(dealer_hand)}.")
+    await message.answer(f"Карты дилера: {', '.join(cards_desc)}. Сумма очков: {calculate_score(dealer_hand)}.")
 
     # Определяем победителя
     player_score = calculate_score(player_hand)
     dealer_score = calculate_score(dealer_hand)
+
     if player_score > dealer_score:
-        await message.reply("Вы победили!")
-    elif player_score < dealer_score:
-        await message.reply("Вы проиграли!")
+        with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
+            await bot.send_photo(message.from_id, photo, caption="Вы победили!")
+        user.count += 2 * user.bet
+        user.wins += 1
+
+    elif player_score < dealer_score < 22:
+        await message.answer("Вы проиграли!")
+    elif dealer_score > 21:
+        with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
+            await bot.send_photo(message.from_id, photo, caption="Вы победили!")
+        user.count += 2 * user.bet
+        user.wins += 1
     else:
-        await message.reply("Ничья!")
+        await message.answer("Ничья!")
+        user.count += user.bet
+    await message.answer('Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
+    await message.answer('Если хотите сыграть еще пишите play',
+                         reply_markup=play_kb)
+    user.games += 1
+    await OurStates.wait_for_play.set()
 
 
 if __name__ == '__main__':
