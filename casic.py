@@ -1,6 +1,7 @@
 import random
 
 
+
 def calculate_score(hand):
     score = 0
     ace_count = 0
@@ -51,3 +52,4 @@ def dealer_and_player_hand(user):
 
         card_2 = user.deck.pop()
         user.dealer_hand.append(card_2)
+

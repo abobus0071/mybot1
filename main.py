@@ -48,6 +48,20 @@ async def profile(message: types.Message):
                          f'Кол-во сыгранных / выигранных игр: {user.games}/{user.wins}')
 
 
+@dp.message_handler(commands=['top10'], state="*")
+async def top_10_users(message: types.Message):
+    # Получаем список пользователей, сортируем по балансу и выбираем топ 10
+    top_users = sorted(user_mapping.values(), key=lambda u: u.count, reverse=True)[:10]
+
+    # Формируем текст для вывода
+    text = "Топ 10 пользователей по балансу:\n"
+    for i, user in enumerate(top_users, start=1):
+        text += f"{i}. {user.name}: ${user.count}\n"
+
+    # Отправляем текст пользователю
+    await message.answer(text)
+
+
 @dp.message_handler(state=OurStates.enter_name)
 async def name_entered(message: types.Message):
     user_id = message.from_id
@@ -108,7 +122,7 @@ async def set_bet(message: types.Message):
     # Если у игрока сразу блэкджек (21 очко), игра завершается
     if player_score == 21:
         with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
-            await bot.send_photo(message.from_id, photo, caption="У вас блэкджек! Вы победили!")
+            await bot.send_photo(user.user_id, photo, caption="У вас блэкджек! Вы победили!")
         user.count += 2 * user.bet
         user.wins += 1
         user.games += 1
@@ -164,9 +178,14 @@ async def hit(message: types.Message):
 
     # Если у игрока больше 21 очка, он проигрывает
     if player_score > 21 and dealer_score < player_score:
-        await message.answer("У вас перебор! Вы проиграли!",
-                             reply_markup=ReplyKeyboardRemove())
+        with open('nepobeda.jpg', 'rb') as photo:
+            await bot.send_photo(user.user_id, photo, caption="У вас перебор! Вы проиграли!",
+                                 reply_markup=ReplyKeyboardRemove())
         user.games += 1
+        if user.count == 0:
+            user.count += 10
+            await message.answer(
+                'К сожалению вы обанкротились, но мы предусмотрели такую ситуацию и перевели вам бесплатные $10. В следующий раз будте аккуратнее')
         await message.answer(
             'Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
         await message.answer('Если хотите сыграть еще пишите play',
@@ -176,7 +195,7 @@ async def hit(message: types.Message):
         await message.answer(f'• Карта дилера({dealer_score} очков): \n'
                              f' {dealer_hand_desc}.')
         with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
-            await bot.send_photo(message.from_id, photo, caption='Вы выиграли. У Дилера перебор',
+            await bot.send_photo(user.user_id, photo, caption='Вы выиграли. У Дилера перебор',
                                  reply_markup=ReplyKeyboardRemove())
         user.count += 2 * user.bet
         user.wins += 1
@@ -232,20 +251,26 @@ async def stand(message: types.Message | types.CallbackQuery):
 
     if player_score > dealer_score:
         with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
-            await bot.send_photo(message.from_user.id, photo, caption="Вы победили!")
+            await bot.send_photo(user.user_id, photo, caption="Вы победили!")
         user.count += 2 * user.bet
         user.wins += 1
 
     elif player_score < dealer_score < 22:
-        await message.answer("Вы проиграли!")
+        with open('nepobeda.jpg', 'rb') as photo:
+            await bot.send_photo(user.user_id, photo, caption="Вы проиграли!")
     elif dealer_score > 21:
         with open('chelovechek-veselyy_55399611_orig_.jpeg', 'rb') as photo:
-            await bot.send_photo(message.from_id, photo, caption="Вы победили!")
+            await bot.send_photo(user.user_id, photo, caption="Вы победили!")
         user.count += 2 * user.bet
         user.wins += 1
     else:
-        await message.answer("Ничья!")
+        with open('nepobeda.jpg', 'rb') as photo:
+            await bot.send_photo(user.user_id, photo, caption="Ничья!")
         user.count += user.bet
+    if user.count == 0:
+        user.count += 10
+        await message.answer(
+            'К сожалению вы обанкротились, но мы предусмотрели такую ситуацию и перевели вам бесплатные $10. В следующий раз будте аккуратнее')
     await message.answer('Пока вы играли мы создали вам профиль(/me), там вы можете просмотреть всю информацию о себе.')
     await message.answer('Если хотите сыграть еще пишите play',
                          reply_markup=play_kb)
