@@ -182,7 +182,7 @@ async def hit(message: types.Message):
             await bot.send_photo(user.user_id, photo, caption="У вас перебор! Вы проиграли!",
                                  reply_markup=ReplyKeyboardRemove())
         user.games += 1
-        if user.count == 0:
+        if user.count <= 0:
             user.count += 10
             await message.answer(
                 'К сожалению вы обанкротились, но мы предусмотрели такую ситуацию и перевели вам бесплатные $10. В следующий раз будте аккуратнее')
